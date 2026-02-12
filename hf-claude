@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) exec claude --help ;;
+  esac
+done
+
 HF_TOKEN="${HF_TOKEN:-}"
 
 if [[ -z "$HF_TOKEN" ]]; then
@@ -63,6 +69,5 @@ export ANTHROPIC_BASE_URL="https://router.huggingface.co"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
-
 
 exec claude --model "$MODEL_STRING" "$@"
