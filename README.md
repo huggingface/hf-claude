@@ -21,7 +21,7 @@ export HF_TOKEN='hf_...'
 ## Install
 
 ```bash
-hf extension install hanouticelina/hf-claude
+hf extensions install hanouticelina/hf-claude
 ```
 
 ## Run
@@ -29,12 +29,12 @@ hf extension install hanouticelina/hf-claude
 ```bash
 hf claude
 # or
-hf extension exec claude
+hf extensions exec claude
 ```
 
 Forward extra args to Claude Code:
 
 ```bash
 hf claude --help
-hf extension exec claude -- --help
+hf extensions exec claude -- --help
 ```
