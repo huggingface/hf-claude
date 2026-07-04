@@ -26,6 +26,53 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# --- Favor Exa MCP for web search on this HF endpoint ---
+# On the HF router (router.huggingface.co), the CLI's native WebSearch calls
+# Anthropic's dedicated search backend, which rejects the HF token used here as
+# ANTHROPIC_API_KEY — so WebSearch returns empty/leaked/hallucinated output
+# instead of real results. (Native WebFetch still works: it fetches URLs
+# harness-side and doesn't need the search backend.) Exa's hosted MCP
+# (https://mcp.exa.ai/mcp) provides web_search_exa / web_fetch_exa and runs
+# keyless on a free, rate-limited tier, so it gives working web search on this
+# endpoint with no Anthropic dependency.
+# We *allow* the Exa tools and nudge the model toward them; we do NOT *deny*
+# the native tools, because in auto-permission mode that makes the advisor
+# treat allowing Exa as "circumventing" the deny and blocks it too — leaving
+# the native tools available as a fallback is the safe choice.
+EXA_MCP_URL="https://mcp.exa.ai/mcp"
+EXA_FLAGS=(
+  --settings '{"permissions":{"allow":["mcp__exa__web_search_exa","mcp__exa__web_fetch_exa"]}}'
+  --append-system-prompt 'For web search and fetching web pages, use the Exa MCP tools (mcp__exa__web_search_exa, mcp__exa__web_fetch_exa) rather than the native WebSearch tool, which does not return results on this endpoint.'
+)
+
+# Skip if the user disabled it, or already passed one of these flags.
+want_exa=1
+[[ "${HF_CLAUDE_EXA:-1}" == "0" ]] && want_exa=0
+for arg in ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}; do
+  case "$arg" in --settings|--append-system-prompt) want_exa=0 ;; esac
+done
+
+if (( want_exa )); then
+  if ! claude mcp list 2>/dev/null | grep -q '^exa:'; then
+    # Not installed: offer a keyless install, but only when interactive.
+    if [[ -t 0 && -t 2 ]] && command -v claude >/dev/null 2>&1; then
+      printf 'Exa MCP (web search) is not configured. Install it now (free, no API key)? [Y/n] ' >&2
+      read -r ans
+      if [[ "${ans:-y}" =~ ^[Yy]$ ]]; then
+        if ! claude mcp add --transport http exa "$EXA_MCP_URL" -s user >/dev/null 2>&1; then
+          echo "Warning: Exa MCP install failed; skipping Exa favoring." >&2
+          want_exa=0
+        fi
+      else
+        want_exa=0
+      fi
+    else
+      # Non-interactive and missing: don't nudge toward a tool that isn't there.
+      want_exa=0
+    fi
+  fi
+fi
+
 HF_TOKEN="${HF_TOKEN:-}"
 
 # Fall back to the token saved by `hf auth login` when HF_TOKEN isn't set.
@@ -195,4 +242,8 @@ X-HF-Bill-To: ${BILL_TO}"
   echo "→ billing to org: ${BILL_TO}" >&2
 fi
 
-exec claude --model "$MODEL_STRING" ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+if (( want_exa )); then
+  exec claude --model "$MODEL_STRING" "${EXA_FLAGS[@]}" ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+else
+  exec claude --model "$MODEL_STRING" ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
+fi
