@@ -180,6 +180,8 @@ export ANTHROPIC_BASE_URL="https://router.huggingface.co"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
+export ANTHROPIC_DEFAULT_FABLE_MODEL="$MODEL_STRING"
+export CLAUDE_CODE_SUBAGENT_MODEL="$MODEL_STRING"
 
 # Bill inference to a HF org via the router's X-HF-Bill-To header. Appended so
 # any user-supplied ANTHROPIC_CUSTOM_HEADERS are preserved.
