@@ -48,6 +48,17 @@ for cmd in curl jq claude; do
   fi
 done
 
+# Config dir for remembering the last used model: $HF_HOME/hf-claude if HF_HOME
+# is set, else $XDG_CACHE_HOME/huggingface/hf-claude, else ~/.cache/huggingface/hf-claude.
+if [[ -n "${HF_HOME:-}" ]]; then
+  CONFIG_DIR="${HF_HOME}/hf-claude"
+elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+  CONFIG_DIR="${XDG_CACHE_HOME}/huggingface/hf-claude"
+else
+  CONFIG_DIR="${HOME}/.cache/huggingface/hf-claude"
+fi
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+
 # Pick one line from stdin. Uses fzf when installed; otherwise falls back to a
 # pure-bash arrow-key menu so fzf stays optional.
 pick() {
@@ -142,34 +153,54 @@ _arrow_menu() {
   printf '%s\n' "${items[sel]}"
 }
 
-MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
-  -H "Authorization: Bearer ${HF_TOKEN}")"
-
-MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' \
-  | pick "Model: " "Hugging Face Inference Providers - Select Model")"
-
-if [[ -z "$MODEL" ]]; then
-  echo "No model selected"
-  exit 1
+# Offer to reuse the last model saved in config.json; accepting skips the
+# remote model listing (one HTTP call, ~300ms).
+MODEL_STRING=""
+if [[ -f "$CONFIG_FILE" && -r /dev/tty ]]; then
+  LAST_MODEL="$(jq -r '.model // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+  if [[ -n "$LAST_MODEL" ]]; then
+    printf 'Use last model %s? [Y/n] ' "$LAST_MODEL" >&2
+    IFS= read -r answer </dev/tty || answer="n"
+    case "$answer" in
+      ''|y|Y|yes|Yes) MODEL_STRING="$LAST_MODEL" ;;
+    esac
+  fi
 fi
 
-PROVIDER="$(
-  {
-    echo "auto"
-    echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
-  } | awk '!seen[$0]++' \
-    | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
-)"
+if [[ -z "$MODEL_STRING" ]]; then
+  MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
+    -H "Authorization: Bearer ${HF_TOKEN}")"
 
-if [[ -z "$PROVIDER" ]]; then
-  echo "No provider selected"
-  exit 1
-fi
+  MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' \
+    | pick "Model: " "Hugging Face Inference Providers - Select Model")"
 
-if [[ "$PROVIDER" == "auto" ]]; then
-  MODEL_STRING="$MODEL"
-else
-  MODEL_STRING="${MODEL}:${PROVIDER}"
+  if [[ -z "$MODEL" ]]; then
+    echo "No model selected"
+    exit 1
+  fi
+
+  PROVIDER="$(
+    {
+      echo "auto"
+      echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
+    } | awk '!seen[$0]++' \
+      | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
+  )"
+
+  if [[ -z "$PROVIDER" ]]; then
+    echo "No provider selected"
+    exit 1
+  fi
+
+  if [[ "$PROVIDER" == "auto" ]]; then
+    MODEL_STRING="$MODEL"
+  else
+    MODEL_STRING="${MODEL}:${PROVIDER}"
+  fi
+
+  # Remember the selection for next launch.
+  mkdir -p "$CONFIG_DIR"
+  jq -n --arg model "$MODEL_STRING" '{model: $model}' > "$CONFIG_FILE"
 fi
 
 echo "→ claude @ ${MODEL_STRING}" >&2
