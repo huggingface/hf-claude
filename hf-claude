@@ -156,13 +156,17 @@ _arrow_menu() {
 # Offer to reuse the last model saved in config.json; accepting skips the
 # remote model listing (one HTTP call, ~300ms).
 MODEL_STRING=""
+CONTEXT_LENGTH=""
 if [[ -f "$CONFIG_FILE" && -r /dev/tty ]]; then
   LAST_MODEL="$(jq -r '.model // empty' "$CONFIG_FILE" 2>/dev/null || true)"
   if [[ -n "$LAST_MODEL" ]]; then
     printf 'Use last model %s? [Y/n] ' "$LAST_MODEL" >&2
     IFS= read -r answer </dev/tty || answer="n"
     case "$answer" in
-      ''|y|Y|yes|Yes) MODEL_STRING="$LAST_MODEL" ;;
+      ''|y|Y|yes|Yes)
+        MODEL_STRING="$LAST_MODEL"
+        CONTEXT_LENGTH="$(jq -r '.context_length // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+        ;;
     esac
   fi
 fi
@@ -192,15 +196,23 @@ if [[ -z "$MODEL_STRING" ]]; then
     exit 1
   fi
 
+  # Context window of the selected provider, so Claude Code doesn't fall back to
+  # its 200k default for models it doesn't recognize. For `auto` take the
+  # smallest advertised window, since any provider may serve the request.
   if [[ "$PROVIDER" == "auto" ]]; then
     MODEL_STRING="$MODEL"
+    CONTEXT_LENGTH="$(echo "$MODEL_DATA" | jq -r --arg model "$MODEL" \
+      '[.data[] | select(.id == $model) | .providers[].context_length // empty] | min // empty')"
   else
     MODEL_STRING="${MODEL}:${PROVIDER}"
+    CONTEXT_LENGTH="$(echo "$MODEL_DATA" | jq -r --arg model "$MODEL" --arg provider "$PROVIDER" \
+      '.data[] | select(.id == $model) | .providers[] | select(.provider == $provider) | .context_length // empty')"
   fi
 
   # Remember the selection for next launch.
   mkdir -p "$CONFIG_DIR"
-  jq -n --arg model "$MODEL_STRING" '{model: $model}' > "$CONFIG_FILE"
+  jq -n --arg model "$MODEL_STRING" --arg context "$CONTEXT_LENGTH" \
+    '{model: $model} + (if $context == "" then {} else {context_length: ($context | tonumber)} end)' > "$CONFIG_FILE"
 fi
 
 echo "→ claude @ ${MODEL_STRING}" >&2
@@ -213,6 +225,13 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_FABLE_MODEL="$MODEL_STRING"
 export CLAUDE_CODE_SUBAGENT_MODEL="$MODEL_STRING"
+
+# Claude Code assumes a 200k window for model names it doesn't recognize and
+# auto-compacts against it. Tell it the real one, unless already set.
+if [[ -z "${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-}" && "$CONTEXT_LENGTH" =~ ^[0-9]+$ && "$CONTEXT_LENGTH" -gt 0 ]]; then
+  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$CONTEXT_LENGTH"
+  echo "→ context window: ${CONTEXT_LENGTH} tokens" >&2
+fi
 
 # Bill inference to a HF org via the router's X-HF-Bill-To header. Appended so
 # any user-supplied ANTHROPIC_CUSTOM_HEADERS are preserved.
