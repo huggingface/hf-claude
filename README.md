@@ -60,3 +60,15 @@ every request. You can also set it via the `HF_BILL_TO` environment variable:
 export HF_BILL_TO=your-org-name
 hf claude
 ```
+
+## Web search on HF endpoints
+
+On the HF router, Claude Code's native `WebSearch` tool doesn't return results — it calls Anthropic's search backend, which rejects the HF token used as `ANTHROPIC_API_KEY`. (Native `WebFetch` still works: it fetches URLs directly, no search backend involved.) `hf claude` therefore favors the [Exa MCP](https://exa.ai/mcp) for web search and fetching pages instead.
+
+On first run, if Exa isn't already configured, you'll be prompted to install it — **free, no API key required** (rate-limited; [add your own key](https://dashboard.exa.ai/api-keys) to raise limits). In non-interactive contexts (piped stdin, CI) the prompt is skipped and the model keeps the native tools as a fallback.
+
+To disable the Exa favoring entirely:
+
+```bash
+HF_CLAUDE_EXA=0 hf claude
+```
